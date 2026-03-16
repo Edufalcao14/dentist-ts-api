@@ -1,0 +1,105 @@
+---
+description: Onion Architecture core principles and dependency rules
+alwaysApply: true
+---
+
+# Onion Architecture Rules
+
+This project follows **Onion Architecture** (Clean Architecture) with strict dependency rules.
+
+## Layer Structure (Innermost to Outermost)
+
+1. **Domain Layer** (`src/entities/`) - Pure business entities, ZERO dependencies
+2. **Application Layer** (`src/usecases/`) - Business logic, depends only on domain
+3. **Infrastructure Layer** - All external concerns:
+   - Data Access (`src/repositories/`) - Database operations
+   - Presentation (`src/rest/`) - HTTP/API layer
+   - External Services (`src/libs/gateway/`) - Third-party integrations
+
+## Dependency Rules (CRITICAL)
+
+```
+Infrastructure (repositories, rest, libs)
+         ↓ depends on
+Application (usecases)
+         ↓ depends on
+Domain (entities)
+         ↑
+    NO UPWARD DEPENDENCIES!
+```
+
+### ✅ ALLOWED
+- Outer layers importing from inner layers
+- Infrastructure implementing interfaces for the application
+- Using `AppContext` for dependency injection
+
+### ❌ FORBIDDEN
+- Domain entities importing from usecases, repositories, or rest
+- Usecases importing from repositories or rest directly
+- Any upward dependencies in the layer hierarchy
+- Business logic in controllers or repositories
+
+## Key Architectural Patterns
+
+### 1. Dependency Injection via Context
+All layers receive dependencies through `AppContext`:
+
+```typescript
+// Use cases receive infrastructure via context
+export const createEntity = async (
+  context: AppContext,
+  input: CreateEntityInput
+): Promise<Entity> => {
+  // Access repositories through context
+  return await context.repositories.entity.create(input);
+};
+```
+
+### 2. Pure Domain Entities
+Domain entities must be pure TypeScript with no external dependencies:
+
+```typescript
+// ✅ CORRECT - Pure interface
+export interface User {
+  id: string;
+  email: string;
+  createdAt: Date;
+}
+
+// ❌ WRONG - Importing from infrastructure
+import { PrismaClient } from '@prisma/client';
+export interface User { /* ... */ }
+```
+
+### 3. Boundary Mapping
+Always map at layer boundaries:
+- Repository mappers: Prisma Model ↔ Domain Entity
+- DTO mappers: Domain Entity ↔ API Response
+
+## Common Anti-Patterns to Avoid
+
+```typescript
+// ❌ WRONG - Business logic in controller
+const create = async (req, res) => {
+  if (!req.body.email.includes('@')) {  // Business logic here!
+    return res.status(400).json({ error: 'Invalid email' });
+  }
+};
+
+// ❌ WRONG - Use case importing database
+import { prisma } from '@/repositories/database/prisma';
+
+// ❌ WRONG - Use case knowing about HTTP
+import { Request } from 'express';
+export const createUser = async (req: Request) => { /* ... */ }
+
+// ❌ WRONG - Passing DTOs directly to use cases
+await usecases.user.create(req.context, req.body);
+```
+
+## Correct Pattern Summary
+
+1. **Controllers**: Extract HTTP data → Call use cases → Map to DTOs → Return response
+2. **Use Cases**: Validate input → Apply business logic → Call repositories → Return entities
+3. **Repositories**: Access database → Map to entities → Return pure domain objects
+4. **Entities**: Pure TypeScript interfaces/classes with no dependencies

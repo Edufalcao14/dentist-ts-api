@@ -1,0 +1,79 @@
+---
+description: Step-by-step guide for adding new features following the architecture
+alwaysApply: false
+globs: **/src/**/*.ts
+---
+
+# Adding New Features - Complete Guide
+
+Follow this checklist to add a new entity/feature to the codebase. See also: `onion-architecture.mdc`, `usecase-pattern.mdc`, `repository-pattern.mdc`, `controller-pattern.mdc`.
+
+## Prerequisites
+
+- [ ] Entity definition planned (fields, relationships)
+- [ ] Database schema updated (Prisma migration created)
+- [ ] Business logic requirements clear
+
+## 1. Define Domain Entity
+
+**Location:** `src/entities/{entity-name}/{entity-name}.ts`
+
+```typescript
+export interface Entity {
+  id: string;
+  field: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+**Input interfaces** (in `src/entities/{entity-name}/`):
+
+- `create-{entity}-input.ts`: `export interface CreateEntityInput { field: string; }`
+- `update-{entity}-input.ts`: `export interface UpdateEntityInput { id: string; field?: string; }`
+- Other inputs as needed: `get-all-...-input.ts`, `get-entity-by-id-input.ts`, `delete-entity-input.ts`
+
+All types live in entities; use case files only import them.
+
+## 2. Repository Layer
+
+- Mapper: `src/repositories/{entity-name}/mappers/{entity-name}.mapper.ts` (Prisma model → Entity)
+- Operations: `create.ts`, `get-all.ts`, `get-by-id.ts`, `update.ts`, `delete.ts` in `src/repositories/{entity-name}/`
+- Aggregator: `index.ts`; add to `src/repositories/index.ts`
+
+Pattern: `init{Operation}{Entity}Repository(prisma)`; always map to domain entity via `toEntity`.
+
+## 3. Use Case Layer
+
+- Files in `src/usecases/{entity-name}/`: `create-{entity}.ts`, `get-all-{entities}.ts`, `get-{entity}-by-id.ts`, `update-{entity}.ts`, `delete-{entity}.ts`
+- **No types in use case files** — import input types from `@/entities/{entity}/...`
+- Imports order: Joi, AppContext, entity/input from entities, errors
+- First line in body: `validateInput(input);` (with `// Validation` comment)
+- Private `validateInput` at bottom; Joi schema defined inside it
+- Aggregator: `index.ts`; add to `src/usecases/index.ts`
+
+## 4. REST Layer
+
+- DTOs: `src/rest/{entity-name}/dtos/` — `{entity}.dto.ts`, `create-{entity}.dto.ts`, `update-{entity}.dto.ts` (Zod)
+- Mapper: `src/rest/{entity-name}/mappers/{entity}.mapper.ts` — `toDto(entity)`
+- Controller: `src/rest/{entity-name}/controllers/{entity}.controller.ts` — all methods in one file, `init{Entity}Controllers(usecases)`
+- Routes: `src/rest/{entity-name}/routes.ts`; add to `src/rest/routes.ts`
+
+## 5. OpenAPI (Optional)
+
+Add endpoints to `src/docs/api/openapi.yaml`.
+
+## Naming Conventions
+
+- **Files:** kebab-case (`create-user.ts`)
+- **Types:** PascalCase (`CreateUserInput`)
+- **Functions:** camelCase (`createUser`)
+- **Factories:** `init{Entity}{Type}` (`initUserRepositories`, `initUserUsecases`, `initUserControllers`)
+
+## Complete Checklist
+
+- [ ] **Domain:** Entity + input interfaces in `src/entities/{entity}/`
+- [ ] **Repository:** Mapper, operations, aggregator, register in `repositories/index.ts`
+- [ ] **Use case:** Operations (no types in files), aggregator, register in `usecases/index.ts`
+- [ ] **REST:** DTOs, mapper, controller, routes, register in `rest/routes.ts`
+- [ ] **Docs:** OpenAPI (optional)

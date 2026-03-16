@@ -1,0 +1,233 @@
+---
+description: Controller layer implementation patterns for HTTP handling
+globs: **/rest/**/controllers/*.ts
+alwaysApply: false
+---
+
+# Controller Pattern
+
+Controllers handle HTTP requests and responses, mapping between HTTP and domain layers.
+
+## File Structure
+
+```
+rest/{entity-name}/
+├── controllers/
+│   └── {entity}.controller.ts  # All controller methods in ONE file
+├── dtos/
+│   ├── {entity}.dto.ts         # Response DTO
+│   ├── create-{entity}.dto.ts  # Create request DTO
+│   └── update-{entity}.dto.ts  # Update request DTO
+├── mappers/
+│   └── {entity}.mapper.ts      # Entity ↔ DTO mapper
+└── routes.ts                   # Route definitions
+```
+
+## Controller Implementation Pattern
+
+### Controller File (`controllers/{entity}.controller.ts`)
+
+**IMPORTANT:** All controller methods for an entity go in ONE file.
+
+```typescript
+import type { Request, Response } from 'express';
+import type { Usecases } from '@/usecases/index.js';
+import type { AppContext } from '@/libs/context/index.js';
+import type { EntityDto } from '../dtos/{entity}.dto.js';
+import type { CreateEntityDto } from '../dtos/create-{entity}.dto.js';
+import type { UpdateEntityDto } from '../dtos/update-{entity}.dto.js';
+import { toDto } from '../mappers/{entity}.mapper.js';
+
+export const initEntityControllers = (usecases: Usecases) => {
+  
+  const create = async (
+    req: Request<any, EntityDto, CreateEntityDto> & { context: AppContext },
+    res: Response<EntityDto>,
+  ) => {
+    const entity = await usecases.entity.create(req.context, {
+      field: req.body.field,
+    });
+
+    const entityDto = toDto(entity);
+    res.status(201).json(entityDto);
+  };
+
+  const getAll = async (
+    req: Request<any, EntityDto[]> & { context: AppContext },
+    res: Response<EntityDto[]>,
+  ) => {
+    const entities = await usecases.entity.getAll(req.context);
+    const entitiesDto = entities.map(toDto);
+    res.json(entitiesDto);
+  };
+
+  const getById = async (
+    req: Request<{ id: string }, EntityDto> & { context: AppContext },
+    res: Response<EntityDto>,
+  ) => {
+    const entity = await usecases.entity.getById(req.context, {
+      id: req.params.id || '',
+    });
+
+    if (!entity) {
+      return res.status(404).json({ message: 'Entity not found' } as any);
+    }
+
+    const entityDto = toDto(entity);
+    res.json(entityDto);
+  };
+
+  const update = async (
+    req: Request<{ id: string }, EntityDto, UpdateEntityDto> & { context: AppContext },
+    res: Response<EntityDto>,
+  ) => {
+    const entity = await usecases.entity.update(req.context, {
+      id: req.params.id || '',
+      field: req.body.field,
+    });
+
+    const entityDto = toDto(entity);
+    res.json(entityDto);
+  };
+
+  const deleteEntity = async (
+    req: Request<{ id: string }> & { context: AppContext },
+    res: Response<void>,
+  ) => {
+    await usecases.entity.delete(req.context, {
+      id: req.params.id || '',
+    });
+
+    res.status(204).send();
+  };
+
+  return {
+    create,
+    getAll,
+    getById,
+    update,
+    delete: deleteEntity,
+  };
+};
+
+export type EntityControllers = ReturnType<typeof initEntityControllers>;
+```
+
+**Key Points:**
+- Export `init{Entity}Controllers` factory function
+- Takes `Usecases` as parameter (dependency injection)
+- All controller methods in ONE file
+- Each method extracts data from HTTP request
+- Maps DTO fields to use case inputs
+- Calls use case through `req.context`
+- Maps entity to DTO using mapper
+- Sets appropriate HTTP status codes
+- Returns controller object with all methods
+- Export type using `ReturnType<typeof ...>`
+
+## HTTP Status Codes
+
+- `200 OK` - Successful GET, PUT (default for `res.json()`)
+- `201 Created` - Successful POST
+- `204 No Content` - Successful DELETE
+- `400 Bad Request` - Invalid input (caught in error handler)
+- `401 Unauthorized` - Not authenticated
+- `403 Forbidden` - Not authorized
+- `404 Not Found` - Resource not found
+- `500 Internal Server Error` - Server error (caught in error handler)
+
+## Routes File (`routes.ts`)
+
+```typescript
+import { Router } from 'express';
+import { initEntityControllers } from './controllers/{entity}.controller.js';
+import type { Usecases } from '@/usecases/index.js';
+
+export const initEntityRoutes = (usecases: Usecases) => {
+  const controllers = initEntityControllers(usecases);
+  const router = Router();
+
+  router.get('/', controllers.getAll as any);
+  router.get('/:id', controllers.getById as any);
+  router.post('/', controllers.create as any);
+  router.put('/:id', controllers.update as any);
+  router.delete('/:id', controllers.delete as any);
+
+  return router;
+};
+```
+
+## DTOs (Data Transfer Objects)
+
+### Response DTO (`dtos/{entity}.dto.ts`)
+
+```typescript
+import { z } from 'zod';
+
+export const EntityDtoSchema = z.object({
+  id: z.string().uuid(),
+  field: z.string(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export type EntityDto = z.infer<typeof EntityDtoSchema>;
+```
+
+### Create Request DTO (`dtos/create-{entity}.dto.ts`)
+
+```typescript
+import { z } from 'zod';
+
+export const CreateEntityDtoSchema = z.object({
+  field: z.string().min(1),
+});
+
+export type CreateEntityDto = z.infer<typeof CreateEntityDtoSchema>;
+```
+
+### Update Request DTO (`dtos/update-{entity}.dto.ts`)
+
+```typescript
+import { z } from 'zod';
+
+export const UpdateEntityDtoSchema = z.object({
+  field: z.string().min(1).optional(),
+});
+
+export type UpdateEntityDto = z.infer<typeof UpdateEntityDtoSchema>;
+```
+
+## DTO Mappers (`mappers/{entity}.mapper.ts`)
+
+```typescript
+import type { Entity } from '@/entities/{entity}/{entity}.js';
+import type { EntityDto } from '../dtos/{entity}.dto.js';
+
+export const toDto = (entity: Entity): EntityDto => {
+  return {
+    id: entity.id,
+    field: entity.field,
+    createdAt: entity.createdAt.toISOString(),
+    updatedAt: entity.updatedAt.toISOString(),
+  };
+};
+```
+
+## Request Context
+
+The `req.context` contains `AppContext` (config, logger, repositories, gateways, auth). Always pass `req.context` to use cases: `await usecases.entity.operation(req.context, input);`
+
+## Checklist for New Controller
+
+- [ ] Create `rest/{entity-name}/` directory
+- [ ] Create `controllers/{entity}.controller.ts` with ALL methods in one file
+- [ ] Create DTOs: `{entity}.dto.ts`, `create-{entity}.dto.ts`, `update-{entity}.dto.ts`
+- [ ] Create `mappers/{entity}.mapper.ts` with `toDto` function
+- [ ] Create `routes.ts` with route definitions
+- [ ] Add to `rest/routes.ts` root router
+- [ ] Use factory pattern: `init{Entity}Controllers`
+- [ ] Pass `req.context` to use cases
+- [ ] Map DTOs to use case inputs; map entities to DTOs
+- [ ] Set correct HTTP status codes; handle 404 explicitly for getById
+- [ ] Export controller types

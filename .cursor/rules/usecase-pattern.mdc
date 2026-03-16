@@ -1,0 +1,204 @@
+---
+description: Use case layer implementation patterns for business logic
+globs: **/usecases/**/*.ts
+alwaysApply: false
+---
+
+# Use Case Pattern
+
+Use cases contain business logic and orchestrate operations across repositories and gateways.
+
+## Rule: No Types in Use Case Files
+
+**All input and entity types must be defined in `src/entities/`.** Use case files must not define interfaces or types; they only import them.
+
+- Input types: `src/entities/{entity}/{operation}-input.ts` (e.g. `create-user-input.ts`, `get-all-articles-input.ts`, `get-entity-by-id-input.ts`)
+- Entity types: `src/entities/{entity}/{entity}.ts`
+
+## File Structure
+
+```
+usecases/{entity-name}/
+├── create-{entity}.ts      # Create operation
+├── get-all-{entities}.ts   # Get all operation
+├── get-{entity}-by-id.ts   # Get by ID operation
+├── update-{entity}.ts      # Update operation
+├── delete-{entity}.ts      # Delete operation
+└── index.ts                # Use case aggregator
+```
+
+## Use Case File Format (Canonical)
+
+Follow this structure for every use case file. Reference: `src/usecases/users/create-user.ts`.
+
+### 1. Imports (in order)
+
+1. `Joi`
+2. `AppContext` from `@/libs/context`
+3. Domain types: entity, input type from `@/entities/{entity}/...`
+4. Errors: `BadUserInputError`, `NotFoundError`, etc.
+
+### 2. Single exported function
+
+One exported function: `export const operationEntity = async (context, input) => { ... }`. No other exports (no types).
+
+### 3. Body order
+
+1. **Validation** — call `validateInput(input);` first (optional comment: `// Validation`).
+2. Auth check (if required).
+3. Business validations (exists, conflicts, etc.).
+4. Call repositories/gateways via `context`.
+5. Return domain entity or composed result.
+
+### 4. Validation helper at bottom
+
+Private `validateInput` at the end of the file. **Schema is defined inside the function** (not at module level). Throws `BadUserInputError` on error.
+
+```typescript
+function validateInput(input: CreateUserInput) {
+  const schema = Joi.object<CreateUserInput>({
+    name: Joi.string().required().not().empty(),
+    email: Joi.string().email().required().not().empty(),
+    password: Joi.string().required().not().empty().min(6),
+  });
+  const { error } = schema.validate(input);
+  if (error) {
+    throw new BadUserInputError(error.message);
+  }
+}
+```
+
+### Full example (create-user style)
+
+```typescript
+import Joi from 'joi';
+import type { AppContext as Context } from '@/libs/context/index.js';
+import type { User } from '@/entities/user/user.js';
+import type { CreateUserInput } from '@/entities/user/create-user-input.js';
+import { BadUserInputError } from '@/entities/errors/bad-user-input-error.js';
+import { BadRequestError } from '@/entities/errors/bad-request-error.js';
+
+export const createUser = async (context: Context, input: CreateUserInput): Promise<AuthPayload> => {
+  // Validation
+  validateInput(input);
+
+  const userExist = await context.repositories.users.getByEmail(input.email);
+  if (userExist) throw new BadRequestError('A user with this email already exists.');
+
+  const external_id = await context.gateways.iam.createUser(input.email, input.password, input.name);
+  const tokens = await context.gateways.iam.signIn(input.email, input.password);
+  const newUser = await context.repositories.users.create({
+    email: input.email,
+    externalId: external_id,
+    name: input.name,
+  });
+
+  return { user: newUser, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
+};
+
+function validateInput(input: CreateUserInput) {
+  const schema = Joi.object<CreateUserInput>({
+    name: Joi.string().required().not().empty(),
+    email: Joi.string().email().required().not().empty(),
+    password: Joi.string().required().not().empty().min(6),
+  });
+  const { error } = schema.validate(input);
+  if (error) {
+    throw new BadUserInputError(error.message);
+  }
+}
+```
+
+**Key Points:**
+- No types defined in the file; input type imported from `@/entities/{entity}/...`
+- Export only the use case function (camelCase: `createUser`, `getAllArticles`)
+- First parameter: `AppContext`; second: input (from entity type)
+- First line in body: `validateInput(input);`
+- `validateInput` is private, at bottom; Joi schema lives inside it
+- Use domain error classes; return domain entities (or composed payloads)
+
+### Use Case Aggregator (`index.ts`)
+
+```typescript
+import { createEntity } from './create-entity.js';
+import { getAllEntities } from './get-all-entities.js';
+import { getEntityById } from './get-entity-by-id.js';
+import { updateEntity } from './update-entity.js';
+import { deleteEntity } from './delete-entity.js';
+
+export const initEntityUsecases = () => {
+  return {
+    create: createEntity,
+    getAll: getAllEntities,
+    getById: getEntityById,
+    update: updateEntity,
+    delete: deleteEntity,
+  };
+};
+
+export type EntityUsecases = ReturnType<typeof initEntityUsecases>;
+```
+
+**Key Points:**
+- Export `init{Entity}Usecases` function
+- Return object mapping operation names to functions
+- Use consistent naming: `create`, `getAll`, `getById`, `update`, `delete`
+- Export type using `ReturnType<typeof ...>`
+
+## Common Use Case Patterns
+
+In all examples, input types are defined in `src/entities/{entity}/` and imported; they are never defined in the use case file.
+
+### Create Entity
+
+Input: `src/entities/entity/create-entity-input.ts`. Use case imports `CreateEntityInput`, calls `validateInput(input)` first, then auth, business checks, repository.
+
+### Get All Entities
+
+Input (if any): e.g. `src/entities/entity/get-all-entities-input.ts`. Use case imports `GetAllArticlesInput` (or similar), defaults `input = {}`, calls `validateInput(input)` first, then repository.
+
+### Get Entity By ID
+
+Input: `src/entities/entity/get-entity-by-id-input.ts` with `{ id: string }`. Use case imports it, validates, then getById; throw `NotFoundError` if null.
+
+### Update / Delete Entity
+
+Input types in `src/entities/entity/update-entity-input.ts` and `delete-entity-input.ts`. Use case imports them, validates, checks auth and existence, then calls repository.
+
+## Error Handling
+
+Use domain-specific error classes:
+
+- `BadUserInputError` - Invalid input from user
+- `UnauthorizedError` - User not authenticated
+- `ForbiddenError` - User not authorized for this action
+- `NotFoundError` - Resource not found
+- `BadRequestError` - General bad request
+
+## Authentication Patterns
+
+### Protected Operation
+```typescript
+if (!context.auth.isAuthenticated) {
+  throw new UnauthorizedError('User must be authenticated');
+}
+```
+
+### Get Current User ID
+```typescript
+if (!context.auth.isAuthenticated) {
+  throw new UnauthorizedError('User must be authenticated');
+}
+const userId = context.auth.userId;
+```
+
+## Checklist for New Use Case
+
+- [ ] Define input types in `src/entities/{entity}/` (e.g. `create-entity-input.ts`); never define types in use case files
+- [ ] Create use case files: `create-{entity}.ts`, `get-all-{entities}.ts`, etc.
+- [ ] Imports: Joi, Context, entity/input from entities, errors
+- [ ] First line in body: `validateInput(input);` (with Joi)
+- [ ] Private `validateInput` at bottom of file with schema defined inside it
+- [ ] Add authentication checks if needed; then business validations; then repositories/gateways
+- [ ] Use domain error classes; return domain entities (never DTOs)
+- [ ] Create `index.ts` aggregator; add to `usecases/index.ts` root aggregator

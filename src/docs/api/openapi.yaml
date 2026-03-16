@@ -1,0 +1,1570 @@
+openapi: 3.0.0
+info:
+  version: 2.0.0
+  title: Dentist Platform API
+  description: |
+    Multi-tenant dentist platform API.
+
+    All CRUD endpoints (except `POST /tenants` and the auth endpoints) require a valid Firebase JWT
+    passed as `Authorization: Bearer <token>`. The token is resolved to a database user and
+    tenant context by the `requireTenantAuth` middleware — all resources are automatically
+    scoped to the authenticated tenant.
+
+    **ID fields** are returned as `string` representations of 64-bit integers (BIGSERIAL).
+    Send them back as strings in request bodies whenever an ID is required.
+
+servers:
+  - url: http://localhost:3001
+    description: Development server
+
+tags:
+  - name: Auth
+    description: Authentication — sign-in, token refresh, forgot-password.
+  - name: Tenants
+    description: Tenant registration and management.
+  - name: Users
+    description: User management within a tenant.
+  - name: Dentists
+    description: Dentist profile management.
+  - name: Patients
+    description: Patient profile management.
+  - name: Services
+    description: Dental services (catalogue) offered by a tenant.
+  - name: Appointments
+    description: Appointment scheduling and management.
+  - name: AppointmentServices
+    description: Services performed during an appointment.
+  - name: Payments
+    description: Payments linked to an appointment.
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ──────────────────── AUTH ────────────────────
+  /api/auth/sign-in:
+    post:
+      summary: Sign in
+      description: Authenticates a user with email + password and returns Firebase tokens plus the resolved user profile.
+      operationId: signIn
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignInRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthPayload'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/refresh:
+    post:
+      summary: Refresh tokens
+      description: Exchanges a refresh token for a new access + refresh token pair.
+      operationId: refreshTokens
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Tokens refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokens'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/forgot-password:
+    post:
+      summary: Send password reset email
+      description: Sends a password reset email. Always returns 204 to avoid user enumeration.
+      operationId: forgotPassword
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '204':
+          description: Email sent (or silently ignored)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ──────────────────── TENANTS ────────────────────
+  /api/tenants:
+    post:
+      summary: Register a new tenant
+      description: Public endpoint — creates a new tenant (clinic registration).
+      operationId: createTenant
+      tags: [Tenants]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/tenants/{id}:
+    get:
+      summary: Get tenant by ID
+      description: Returns the tenant the authenticated user belongs to.
+      operationId: getTenantById
+      tags: [Tenants]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: Tenant found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update tenant
+      operationId: updateTenant
+      tags: [Tenants]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        '200':
+          description: Tenant updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Soft-delete tenant
+      operationId: deleteTenant
+      tags: [Tenants]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: Tenant deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ──────────────────── USERS ────────────────────
+  /api/users:
+    get:
+      summary: List users
+      description: Returns all users belonging to the authenticated tenant.
+      operationId: getAllUsers
+      tags: [Users]
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create user
+      description: Creates a new user (and Firebase account) within the authenticated tenant.
+      operationId: createUser
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/users/{id}:
+    get:
+      summary: Get user by ID
+      operationId: getUserById
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update user
+      operationId: updateUser
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Soft-delete user
+      operationId: deleteUser
+      tags: [Users]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: User deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ──────────────────── DENTISTS ────────────────────
+  /api/dentists:
+    get:
+      summary: List dentists
+      operationId: getAllDentists
+      tags: [Dentists]
+      responses:
+        '200':
+          description: Dentist list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Dentist'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create dentist profile
+      description: Links an existing user to a dentist profile.
+      operationId: createDentist
+      tags: [Dentists]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDentistRequest'
+      responses:
+        '201':
+          description: Dentist created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dentist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/dentists/{id}:
+    get:
+      summary: Get dentist by ID
+      operationId: getDentistById
+      tags: [Dentists]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: Dentist found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dentist'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update dentist
+      operationId: updateDentist
+      tags: [Dentists]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDentistRequest'
+      responses:
+        '200':
+          description: Dentist updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dentist'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete dentist profile
+      operationId: deleteDentist
+      tags: [Dentists]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: Dentist deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ──────────────────── PATIENTS ────────────────────
+  /api/patients:
+    get:
+      summary: List patients
+      operationId: getAllPatients
+      tags: [Patients]
+      responses:
+        '200':
+          description: Patient list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Patient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create patient profile
+      operationId: createPatient
+      tags: [Patients]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePatientRequest'
+      responses:
+        '201':
+          description: Patient created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/patients/{id}:
+    get:
+      summary: Get patient by ID
+      operationId: getPatientById
+      tags: [Patients]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: Patient found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update patient
+      operationId: updatePatient
+      tags: [Patients]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePatientRequest'
+      responses:
+        '200':
+          description: Patient updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Soft-delete patient
+      operationId: deletePatient
+      tags: [Patients]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: Patient deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ──────────────────── SERVICES ────────────────────
+  /api/services:
+    get:
+      summary: List services
+      operationId: getAllServices
+      tags: [Services]
+      responses:
+        '200':
+          description: Service list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create service
+      operationId: createService
+      tags: [Services]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateServiceRequest'
+      responses:
+        '201':
+          description: Service created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/services/{id}:
+    get:
+      summary: Get service by ID
+      operationId: getServiceById
+      tags: [Services]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: Service found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update service
+      operationId: updateService
+      tags: [Services]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateServiceRequest'
+      responses:
+        '200':
+          description: Service updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Soft-delete service
+      operationId: deleteService
+      tags: [Services]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: Service deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ──────────────────── APPOINTMENTS ────────────────────
+  /api/appointments:
+    get:
+      summary: List appointments
+      operationId: getAllAppointments
+      tags: [Appointments]
+      responses:
+        '200':
+          description: Appointment list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create appointment
+      operationId: createAppointment
+      tags: [Appointments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAppointmentRequest'
+      responses:
+        '201':
+          description: Appointment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/appointments/{id}:
+    get:
+      summary: Get appointment by ID
+      operationId: getAppointmentById
+      tags: [Appointments]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: Appointment found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update appointment
+      operationId: updateAppointment
+      tags: [Appointments]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAppointmentRequest'
+      responses:
+        '200':
+          description: Appointment updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Appointment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Soft-delete appointment
+      operationId: deleteAppointment
+      tags: [Appointments]
+      parameters:
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: Appointment deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ──────────────────── APPOINTMENT SERVICES ────────────────────
+  /api/appointments/{appointmentId}/services:
+    get:
+      summary: List services for an appointment
+      operationId: getAllAppointmentServices
+      tags: [AppointmentServices]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+      responses:
+        '200':
+          description: Appointment service list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppointmentService'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      summary: Add a service to an appointment
+      operationId: createAppointmentService
+      tags: [AppointmentServices]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAppointmentServiceRequest'
+      responses:
+        '201':
+          description: Appointment service added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentService'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/appointments/{appointmentId}/services/{id}:
+    get:
+      summary: Get appointment service by ID
+      operationId: getAppointmentServiceById
+      tags: [AppointmentServices]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: Appointment service found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentService'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update appointment service
+      operationId: updateAppointmentService
+      tags: [AppointmentServices]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAppointmentServiceRequest'
+      responses:
+        '200':
+          description: Appointment service updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentService'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Remove service from appointment
+      operationId: deleteAppointmentService
+      tags: [AppointmentServices]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: Appointment service removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ──────────────────── PAYMENTS ────────────────────
+  /api/appointments/{appointmentId}/payments:
+    get:
+      summary: List payments for an appointment
+      operationId: getAllPayments
+      tags: [Payments]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+      responses:
+        '200':
+          description: Payment list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      summary: Create payment
+      operationId: createPayment
+      tags: [Payments]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+      responses:
+        '201':
+          description: Payment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/appointments/{appointmentId}/payments/{id}:
+    get:
+      summary: Get payment by ID
+      operationId: getPaymentById
+      tags: [Payments]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '200':
+          description: Payment found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      summary: Update payment
+      operationId: updatePayment
+      tags: [Payments]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+        - $ref: '#/components/parameters/BigIntId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePaymentRequest'
+      responses:
+        '200':
+          description: Payment updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete payment
+      operationId: deletePayment
+      tags: [Payments]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentIdParam'
+        - $ref: '#/components/parameters/BigIntId'
+      responses:
+        '204':
+          description: Payment deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# ──────────────────────────────────────────────────────────────
+components:
+  parameters:
+    BigIntId:
+      name: id
+      in: path
+      required: true
+      description: Resource ID (BIGSERIAL serialised as string)
+      schema:
+        type: string
+        example: '1'
+
+    AppointmentIdParam:
+      name: appointmentId
+      in: path
+      required: true
+      description: Appointment ID
+      schema:
+        type: string
+        example: '42'
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Authenticated but not authorised for this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    # ── Common ──
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Resource not found
+
+    # ── Auth ──
+    SignInRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@clinic.com
+        password:
+          type: string
+          format: password
+          example: secret123
+
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@clinic.com
+
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+
+    AuthPayload:
+      type: object
+      required: [user, accessToken, refreshToken]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        accessToken:
+          type: string
+          example: eyJhbGci...
+        refreshToken:
+          type: string
+          example: eyJhbGci...
+
+    AuthTokens:
+      type: object
+      required: [accessToken, refreshToken, expiredAt]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiredAt:
+          type: string
+          format: date-time
+
+    # ── Tenant ──
+    Tenant:
+      type: object
+      required: [id, name, planType, planStatus, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          example: '1'
+        name:
+          type: string
+          example: Smile Dental Clinic
+        address:
+          type: string
+          nullable: true
+        cnpj:
+          type: string
+          nullable: true
+          example: '12.345.678/0001-99'
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        stripeCustomerId:
+          type: string
+          nullable: true
+        planType:
+          type: string
+          example: professional
+        planStatus:
+          type: string
+          example: active
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateTenantRequest:
+      type: object
+      required: [name, planType, planStatus]
+      properties:
+        name:
+          type: string
+        planType:
+          type: string
+        planStatus:
+          type: string
+        address:
+          type: string
+        cnpj:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+
+    UpdateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        planType:
+          type: string
+        planStatus:
+          type: string
+        address:
+          type: string
+          nullable: true
+        cnpj:
+          type: string
+          nullable: true
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+
+    # ── User ──
+    User:
+      type: object
+      required: [id, tenantId, firebaseUid, role, firstName, lastName, email, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          example: '10'
+        tenantId:
+          type: string
+          example: '1'
+        firebaseUid:
+          type: string
+          example: firebase_uid_abc123
+        role:
+          type: string
+          example: admin
+        firstName:
+          type: string
+          example: João
+        lastName:
+          type: string
+          example: Silva
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        birthdate:
+          type: string
+          format: date-time
+          nullable: true
+        cpf:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateUserRequest:
+      type: object
+      required: [role, firstName, lastName, email]
+      properties:
+        role:
+          type: string
+          example: dentist
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        birthdate:
+          type: string
+          format: date
+        cpf:
+          type: string
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        role:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        birthdate:
+          type: string
+          format: date
+          nullable: true
+        cpf:
+          type: string
+          nullable: true
+
+    # ── Dentist ──
+    Dentist:
+      type: object
+      required: [id, userId, createdAt]
+      properties:
+        id:
+          type: string
+          example: '5'
+        userId:
+          type: string
+          example: '10'
+        croNumber:
+          type: string
+          nullable: true
+          example: SP-12345
+        specialization:
+          type: string
+          nullable: true
+          example: Orthodontics
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateDentistRequest:
+      type: object
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          example: '10'
+        croNumber:
+          type: string
+        specialization:
+          type: string
+
+    UpdateDentistRequest:
+      type: object
+      properties:
+        croNumber:
+          type: string
+          nullable: true
+        specialization:
+          type: string
+          nullable: true
+
+    # ── Patient ──
+    Patient:
+      type: object
+      required: [id, tenantId, userId, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          example: '20'
+        tenantId:
+          type: string
+        userId:
+          type: string
+        cpf:
+          type: string
+          nullable: true
+        birthdate:
+          type: string
+          format: date-time
+          nullable: true
+        allergies:
+          nullable: true
+          description: Arbitrary JSON object describing patient allergies
+        medicalNotes:
+          nullable: true
+          description: Arbitrary JSON object with medical notes
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreatePatientRequest:
+      type: object
+      required: [userId]
+      properties:
+        userId:
+          type: string
+        cpf:
+          type: string
+        birthdate:
+          type: string
+          format: date
+        allergies:
+          description: JSON object describing allergies
+        medicalNotes:
+          description: JSON object with medical notes
+
+    UpdatePatientRequest:
+      type: object
+      properties:
+        cpf:
+          type: string
+          nullable: true
+        birthdate:
+          type: string
+          format: date
+          nullable: true
+        allergies:
+          nullable: true
+        medicalNotes:
+          nullable: true
+
+    # ── Service ──
+    Service:
+      type: object
+      required: [id, tenantId, name, price, durationMinutes, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          example: '3'
+        tenantId:
+          type: string
+        name:
+          type: string
+          example: Teeth Cleaning
+        code:
+          type: string
+          nullable: true
+          example: TC-001
+        price:
+          type: string
+          description: Decimal value serialised as string
+          example: '150.00'
+        durationMinutes:
+          type: integer
+          example: 60
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateServiceRequest:
+      type: object
+      required: [name, price, durationMinutes]
+      properties:
+        name:
+          type: string
+        price:
+          type: number
+          example: 150.00
+        durationMinutes:
+          type: integer
+          example: 60
+        code:
+          type: string
+
+    UpdateServiceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+          nullable: true
+        price:
+          type: number
+        durationMinutes:
+          type: integer
+
+    # ── Appointment ──
+    Appointment:
+      type: object
+      required: [id, tenantId, patientId, dentistId, dateTime, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          example: '100'
+        tenantId:
+          type: string
+        patientId:
+          type: string
+        dentistId:
+          type: string
+        dateTime:
+          type: string
+          format: date-time
+          example: '2025-06-15T10:00:00.000Z'
+        status:
+          type: string
+          example: scheduled
+        notes:
+          type: string
+          nullable: true
+        totalAmount:
+          type: string
+          nullable: true
+          description: Decimal value serialised as string
+          example: '300.00'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateAppointmentRequest:
+      type: object
+      required: [patientId, dentistId, dateTime, status]
+      properties:
+        patientId:
+          type: string
+        dentistId:
+          type: string
+        dateTime:
+          type: string
+          format: date-time
+        status:
+          type: string
+          example: scheduled
+        notes:
+          type: string
+        totalAmount:
+          type: number
+
+    UpdateAppointmentRequest:
+      type: object
+      properties:
+        patientId:
+          type: string
+        dentistId:
+          type: string
+        dateTime:
+          type: string
+          format: date-time
+        status:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        totalAmount:
+          type: number
+          nullable: true
+
+    # ── AppointmentService ──
+    AppointmentService:
+      type: object
+      required: [id, appointmentId, serviceId, quantity, unitPrice, lineTotal, createdAt]
+      properties:
+        id:
+          type: string
+        appointmentId:
+          type: string
+        serviceId:
+          type: string
+        quantity:
+          type: integer
+          example: 1
+        notes:
+          type: string
+          nullable: true
+        unitPrice:
+          type: string
+          description: Decimal serialised as string
+          example: '150.00'
+        lineTotal:
+          type: string
+          description: Decimal serialised as string
+          example: '150.00'
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateAppointmentServiceRequest:
+      type: object
+      required: [appointmentId, serviceId, quantity, unitPrice, lineTotal]
+      properties:
+        appointmentId:
+          type: string
+        serviceId:
+          type: string
+        quantity:
+          type: integer
+        unitPrice:
+          type: number
+        lineTotal:
+          type: number
+        notes:
+          type: string
+
+    UpdateAppointmentServiceRequest:
+      type: object
+      properties:
+        quantity:
+          type: integer
+        unitPrice:
+          type: number
+        lineTotal:
+          type: number
+        notes:
+          type: string
+          nullable: true
+
+    # ── Payment ──
+    Payment:
+      type: object
+      required: [id, appointmentId, amount, status, createdAt]
+      properties:
+        id:
+          type: string
+        appointmentId:
+          type: string
+        amount:
+          type: string
+          description: Decimal serialised as string
+          example: '300.00'
+        stripePaymentIntentId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          example: paid
+        paymentMethod:
+          type: string
+          nullable: true
+          example: credit_card
+        createdAt:
+          type: string
+          format: date-time
+
+    CreatePaymentRequest:
+      type: object
+      required: [appointmentId, amount, status]
+      properties:
+        appointmentId:
+          type: string
+        amount:
+          type: number
+        status:
+          type: string
+        stripePaymentIntentId:
+          type: string
+        paymentMethod:
+          type: string
+
+    UpdatePaymentRequest:
+      type: object
+      properties:
+        status:
+          type: string
+        stripePaymentIntentId:
+          type: string
+          nullable: true
+        paymentMethod:
+          type: string
+          nullable: true
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Firebase ID token obtained from sign-in.

@@ -1,0 +1,203 @@
+---
+description: Repository layer implementation patterns for data access
+globs: **/repositories/**/*.ts
+alwaysApply: false
+---
+
+# Repository Pattern
+
+Repositories handle data access and mapping between Prisma models and domain entities.
+
+## File Structure
+
+```
+repositories/{entity-name}/
+├── {operation}.ts         # Individual operations (create.ts, get-all.ts, etc.)
+├── index.ts               # Repository aggregator
+└── mappers/
+    └── {entity}.mapper.ts # Prisma model ↔ Entity mapper
+```
+
+## Repository Implementation Pattern
+
+### Individual Operation File (`{operation}.ts`)
+
+```typescript
+import type { PrismaClient } from '@prisma/client';
+import type { Entity } from '@/entities/{entity}/{entity}.js';
+import { toEntity } from './mappers/{entity}.mapper.js';
+
+// Define input data interface
+export interface OperationEntityData {
+  // Properties needed for this operation
+  field: string;
+}
+
+// Repository factory function
+export const initOperationEntityRepository = (prisma: PrismaClient) => {
+  return async (data: OperationEntityData): Promise<Entity> => {
+    // 1. Perform database operation
+    const model = await prisma.{entity}.{operation}({
+      data: {
+        field: data.field,
+      },
+    });
+
+    // 2. Map to domain entity
+    return toEntity(model);
+  };
+};
+```
+
+**Key Points:**
+- Export a factory function named `init{Operation}{Entity}Repository`
+- Takes `PrismaClient` as parameter (dependency injection)
+- Returns an async function that performs the operation
+- Define input interface for type safety
+- Always map Prisma models to domain entities using mappers
+- NO business logic—only data access
+
+### Repository Aggregator (`index.ts`)
+
+```typescript
+import type { PrismaClient } from '@prisma/client';
+import { initCreateEntityRepository } from './create.js';
+import { initGetAllEntitiesRepository } from './get-all.js';
+import { initGetEntityByIdRepository } from './get-by-id.js';
+import { initUpdateEntityRepository } from './update.js';
+import { initDeleteEntityRepository } from './delete.js';
+
+export const initEntityRepositories = (prisma: PrismaClient) => {
+  return {
+    create: initCreateEntityRepository(prisma),
+    getAll: initGetAllEntitiesRepository(prisma),
+    getById: initGetEntityByIdRepository(prisma),
+    update: initUpdateEntityRepository(prisma),
+    delete: initDeleteEntityRepository(prisma),
+  };
+};
+
+export type EntityRepositories = ReturnType<typeof initEntityRepositories>;
+```
+
+**Key Points:**
+- Export `init{Entity}Repositories` function
+- Return object with all operations as properties
+- Export type using `ReturnType<typeof ...>`
+- Use consistent naming: `getAll`, `getById`, `create`, `update`, `delete`
+
+### Repository Mapper (`mappers/{entity}.mapper.ts`)
+
+```typescript
+import type { Entity } from '@/entities/{entity}/{entity}.js';
+import type { Model } from '@prisma/client';
+
+// Database Model → Domain Entity
+export const toEntity = (model: Model): Entity => {
+  return {
+    id: model.id,
+    field: model.field,
+    createdAt: model.createdAt,
+    updatedAt: model.updatedAt,
+  };
+};
+
+// Domain Entity → Database Model (for updates, if needed)
+export const toModel = (entity: Partial<Entity>): Partial<Model> => {
+  return {
+    field: entity.field,
+    // Don't include id, createdAt if not updating them
+  };
+};
+```
+
+**Key Points:**
+- Export `toEntity` for model → entity conversion (always needed)
+- Export `toModel` for entity → model conversion (if needed for updates)
+- Handle type conversions (Date objects remain as Date in both)
+- Keep pure mapping logic—no business rules
+
+## Common Patterns
+
+### Get All
+```typescript
+export const initGetAllEntitiesRepository = (prisma: PrismaClient) => {
+  return async (): Promise<Entity[]> => {
+    const models = await prisma.entity.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    return models.map(toEntity);
+  };
+};
+```
+
+### Get By ID
+```typescript
+export const initGetEntityByIdRepository = (prisma: PrismaClient) => {
+  return async (id: string): Promise<Entity | null> => {
+    const model = await prisma.entity.findUnique({
+      where: { id },
+    });
+    return model ? toEntity(model) : null;
+  };
+};
+```
+
+### Create
+```typescript
+export interface CreateEntityData {
+  field: string;
+}
+
+export const initCreateEntityRepository = (prisma: PrismaClient) => {
+  return async (data: CreateEntityData): Promise<Entity> => {
+    const model = await prisma.entity.create({
+      data: {
+        field: data.field,
+      },
+    });
+    return toEntity(model);
+  };
+};
+```
+
+### Update
+```typescript
+export interface UpdateEntityData {
+  id: string;
+  field?: string;
+}
+
+export const initUpdateEntityRepository = (prisma: PrismaClient) => {
+  return async (data: UpdateEntityData): Promise<Entity> => {
+    const { id, ...updateData } = data;
+    const model = await prisma.entity.update({
+      where: { id },
+      data: updateData,
+    });
+    return toEntity(model);
+  };
+};
+```
+
+### Delete
+```typescript
+export const initDeleteEntityRepository = (prisma: PrismaClient) => {
+  return async (id: string): Promise<void> => {
+    await prisma.entity.delete({
+      where: { id },
+    });
+  };
+};
+```
+
+## Checklist for New Repository
+
+- [ ] Create `repositories/{entity-name}/` directory
+- [ ] Create operation files: `create.ts`, `get-all.ts`, `get-by-id.ts`, `update.ts`, `delete.ts`
+- [ ] Create `mappers/{entity-name}.mapper.ts` with `toEntity` function
+- [ ] Create `index.ts` aggregator
+- [ ] Add to `repositories/index.ts` root aggregator
+- [ ] Use factory pattern: `init{Operation}{Entity}Repository`
+- [ ] Always map Prisma models to domain entities
+- [ ] Export proper TypeScript types
